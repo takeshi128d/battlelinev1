@@ -3,13 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FRONTIER LINE - PvE</title>
+    <title>FRONTIER LINE - ONLINE</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Firebase SDK (v8 互換モード) -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Roboto+Condensed:wght@700&display=swap');
 
         body {
-            background-color: #0f172a; /* slate-900 */
+            background-color: #0f172a;
             color: #e2e8f0;
             font-family: 'Roboto Condensed', sans-serif;
             overflow: hidden;
@@ -17,7 +22,7 @@
             user-select: none;
         }
 
-        /* --- カードデザイン --- */
+        /* --- カード共通 --- */
         .card {
             width: 52px;
             height: 78px;
@@ -30,7 +35,7 @@
             font-weight: bold;
             box-shadow: 2px 3px 6px rgba(0,0,0,0.4);
             cursor: pointer;
-            transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
+            transition: transform 0.15s, box-shadow 0.15s;
             position: relative;
             border-width: 2px;
             border-style: solid;
@@ -41,76 +46,31 @@
         .card:active { transform: scale(0.95); }
         .card.selected {
             transform: translateY(-12px) scale(1.05);
-            box-shadow: 0 0 15px rgba(250, 204, 21, 0.9); /* yellow glow */
+            box-shadow: 0 0 15px rgba(250, 204, 21, 0.9);
             border-color: #facc15;
             z-index: 20;
         }
-        .card.banned {
-            filter: grayscale(100%) opacity(0.3);
-            transform: scale(0.9);
-            border-color: #333;
-            pointer-events: none;
+        /* 裏面 */
+        .card.back {
+            background: repeating-linear-gradient(45deg, #1e293b, #1e293b 10px, #334155 10px, #334155 20px);
+            border-color: #475569;
+            cursor: default;
         }
         
-        /* 色別スタイル (4色) */
-        /* 赤: 剣 (Attack) */
-        .card.color-0 {
-            background: linear-gradient(135deg, #450a0a, #7f1d1d);
-            border-color: #f87171;
-            color: #fecaca;
-        }
-        /* 緑: 弓 (Dexterity) */
-        .card.color-1 {
-            background: linear-gradient(135deg, #052e16, #14532d);
-            border-color: #4ade80;
-            color: #bbf7d0;
-        }
-        /* 青: 杖 (Magic) */
-        .card.color-2 {
-            background: linear-gradient(135deg, #172554, #1e3a8a);
-            border-color: #60a5fa;
-            color: #bfdbfe;
-        }
-        /* 黄: 盾 (Defense) - NEW */
-        .card.color-3 {
-            background: linear-gradient(135deg, #451a03, #b45309);
-            border-color: #fbbf24;
-            color: #fef3c7;
-        }
+        .card.color-0 { background: linear-gradient(135deg, #450a0a, #7f1d1d); border-color: #f87171; color: #fecaca; }
+        .card.color-1 { background: linear-gradient(135deg, #052e16, #14532d); border-color: #4ade80; color: #bbf7d0; }
+        .card.color-2 { background: linear-gradient(135deg, #172554, #1e3a8a); border-color: #60a5fa; color: #bfdbfe; }
+        .card.color-3 { background: linear-gradient(135deg, #451a03, #b45309); border-color: #fbbf24; color: #fef3c7; }
 
-        /* カード内の装飾 */
-        .card-num {
-            font-size: 1.3rem;
-            line-height: 1;
-            text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
-        }
-        .card-icon {
-            font-size: 1.2rem;
-            opacity: 0.8;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            z-index: 0;
-            font-size: 2.5rem;
-            opacity: 0.2;
-            pointer-events: none;
-        }
-        .card-corner-icon {
-            font-size: 0.7rem;
-        }
+        .card-num { font-size: 1.3rem; line-height: 1; text-shadow: 1px 1px 0 rgba(0,0,0,0.5); }
+        .card-icon { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); opacity: 0.2; font-size: 2.5rem; pointer-events: none; }
+        .card-corner-icon { font-size: 0.7rem; }
         
-        /* 小さいカード (盤面用) */
-        .card-sm {
-            width: 40px;
-            height: 58px;
-            border-width: 1px;
-            margin: -6px 0; /* 重ねる */
-        }
+        /* 盤面用カード */
+        .card-sm { width: 40px; height: 58px; border-width: 1px; margin: -6px 0; }
         .card-sm .card-num { font-size: 1.0rem; }
-        .card-sm .card-icon { font-size: 1.4rem; }
 
-        /* --- レーン --- */
+        /* レーン */
         .lane-container {
             position: relative;
             display: flex;
@@ -124,130 +84,77 @@
         }
         .lane-container.highlight {
             background: rgba(251, 191, 36, 0.15);
-            box-shadow: inset 0 0 20px rgba(251, 191, 36, 0.2);
             cursor: pointer;
         }
-        /* CPU思考中のエフェクト */
-        .cpu-thinking .lane-container {
-            opacity: 0.7;
-            pointer-events: none;
-        }
 
-        /* --- フラッグマーカー --- */
+        /* フラッグ */
         .flag-marker {
-            width: 32px;
-            height: 32px;
-            border-radius: 4px;
-            background: #1e293b;
-            border: 2px solid #475569;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.9rem;
-            z-index: 5;
-            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            width: 32px; height: 32px; border-radius: 4px; background: #1e293b; border: 2px solid #475569;
+            display: flex; align-items: center; justify-content: center; font-size: 0.9rem; z-index: 5;
+            transition: all 0.4s;
         }
-        .flag-marker.p1-win {
-            background: #2563eb;
-            border-color: #60a5fa;
-            transform: translateY(24px) rotate(-10deg) scale(1.2);
-            box-shadow: 0 0 15px #2563eb;
-            color: white;
-        }
-        .flag-marker.p2-win {
-            background: #dc2626;
-            border-color: #f87171;
-            transform: translateY(-24px) rotate(10deg) scale(1.2);
-            box-shadow: 0 0 15px #dc2626;
-            color: white;
-        }
+        .flag-marker.p1-win { background: #2563eb; border-color: #60a5fa; transform: translateY(24px) rotate(-10deg) scale(1.2); color: white; box-shadow: 0 0 10px #2563eb; }
+        .flag-marker.p2-win { background: #dc2626; border-color: #f87171; transform: translateY(-24px) rotate(10deg) scale(1.2); color: white; box-shadow: 0 0 10px #dc2626; }
 
-        /* --- UI要素 --- */
-        .hand-rank {
-            font-size: 0.65rem;
-            font-weight: bold;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            text-shadow: 0 0 5px rgba(0,0,0,0.8);
-            height: 1rem;
-            width: 100%;
-            text-align: center;
-        }
-
+        /* オーバーレイ */
         #overlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(15, 23, 42, 0.95);
-            backdrop-filter: blur(5px);
-            z-index: 50;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
+            position: fixed; inset: 0; background: rgba(15, 23, 42, 0.95); z-index: 50;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
         }
-
-        #ban-grid {
-            display: grid;
-            grid-template-columns: repeat(8, 1fr); /* 4色なので幅広に */
-            gap: 4px;
-            max-width: 95vw;
-            margin: 10px;
-        }
+        input { background: #1e293b; border: 1px solid #475569; color: white; padding: 10px; border-radius: 4px; text-align: center; font-size: 1.2rem; outline: none; }
+        input:focus { border-color: #facc15; }
     </style>
 </head>
 <body class="h-screen w-full flex flex-col">
 
-    <!-- オーバーレイ -->
+    <!-- オーバーレイ (ロビー/メッセージ) -->
     <div id="overlay">
-        <!-- タイトル画面 -->
-        <div id="screen-title" class="text-center">
-            <h1 class="text-6xl font-bold mb-2 text-yellow-500 tracking-widest" style="font-family: 'Cinzel'">FRONTIER LINE</h1>
-            <p class="text-gray-400 mb-8 text-sm tracking-widest">PLAYER vs CPU</p>
-            <button onclick="startBanPhase()" class="px-12 py-4 bg-yellow-600 hover:bg-yellow-500 text-white font-bold rounded shadow-lg transition transform hover:scale-105 border-2 border-yellow-400">
-                GAME START
+        <h1 class="text-4xl font-bold mb-2 text-yellow-500" style="font-family: 'Cinzel'">FRONTIER LINE</h1>
+        <p class="text-gray-400 mb-8 text-xs tracking-widest">ONLINE MULTIPLAYER</p>
+        
+        <!-- ロビー画面 -->
+        <div id="screen-lobby" class="text-center w-full max-w-sm px-4">
+            <div class="mb-6">
+                <p class="mb-2 text-sm text-gray-300">合言葉(Room ID)を入力してください</p>
+                <input type="text" id="room-id-input" placeholder="例: battle123" class="w-full mb-2 uppercase">
+                <p class="text-xs text-gray-500">※同じ合言葉の人とマッチングします</p>
+            </div>
+            
+            <div id="firebase-warning" class="hidden text-red-400 text-xs mb-4 border border-red-900 p-2 rounded bg-red-900/20">
+                ⚠️ エラー: データベースに接続できません。<br>Firebaseコンソールで「Firestore Database」を作成し、ルールを「テストモード」に設定してください。
+            </div>
+
+            <button onclick="tryJoinRoom()" id="btn-join" class="w-full px-6 py-4 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded shadow-lg transition">
+                ENTER ROOM
             </button>
         </div>
 
-        <!-- Ban選択画面 -->
-        <div id="screen-ban" class="text-center hidden w-full flex flex-col items-center">
-            <h2 class="text-2xl text-red-400 font-bold mb-2" style="font-family: 'Cinzel'">TACTICAL BAN</h2>
-            <p class="text-gray-300 text-sm mb-2">この対戦から除外するカードを<span class="text-red-400 font-bold">3枚</span>選択してください。<br>(CPUも裏で3枚Banします)</p>
-            
-            <div id="ban-grid" class="flex-1 overflow-y-auto p-2">
-                <!-- 全カード一覧 -->
-            </div>
-            
-            <div class="mt-4 flex gap-4 items-center mb-4">
-                <div class="text-xl font-bold" id="ban-count">0 / 3</div>
-                <button id="btn-confirm-ban" onclick="finishBanPhase()" disabled class="px-8 py-2 bg-gray-700 text-gray-400 font-bold rounded border border-gray-600 transition">
-                    CONFIRM & START
-                </button>
-            </div>
+        <!-- 待機画面 -->
+        <div id="screen-wait" class="text-center hidden">
+            <div class="animate-spin text-4xl mb-4">⚔️</div>
+            <h2 class="text-2xl font-bold mb-2 text-white">WAITING FOR OPPONENT...</h2>
+            <p class="text-gray-400 text-sm">相手の入室を待っています<br>Room ID: <span id="display-room-id" class="text-yellow-400 font-mono"></span></p>
         </div>
 
-        <!-- 結果画面 -->
+        <!-- メッセージ画面 (勝敗など) -->
         <div id="screen-msg" class="text-center hidden">
             <h2 id="msg-title" class="text-5xl font-bold mb-4"></h2>
             <p id="msg-sub" class="mb-8 text-gray-300 text-xl"></p>
-            <button id="msg-btn" class="px-10 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded shadow-lg transition transform hover:scale-105">
-                OK
+            <button onclick="location.reload()" class="px-10 py-3 bg-gray-700 hover:bg-gray-600 text-white font-bold rounded">
+                LEAVE ROOM
             </button>
         </div>
     </div>
 
     <!-- ゲームエリア -->
-    <div id="game-container" class="flex-1 flex flex-col max-w-md mx-auto w-full relative border-x border-slate-800 bg-slate-900 shadow-2xl">
+    <div class="flex-1 flex flex-col max-w-md mx-auto w-full relative border-x border-slate-800 bg-slate-900 shadow-2xl">
         
-        <!-- 上部：CPUエリア -->
-        <div class="h-28 bg-gradient-to-b from-slate-900 to-slate-800 flex items-center justify-between px-4 border-b border-slate-700">
+        <!-- 上部：相手エリア -->
+        <div class="h-28 bg-slate-800 flex items-center justify-between px-4 border-b border-slate-700">
             <div>
-                <div class="text-xs text-red-500 font-bold tracking-widest flex items-center gap-2">
-                    CPU OPPONENT
-                    <span id="cpu-status" class="hidden text-yellow-400 animate-pulse text-[10px]">THINKING...</span>
-                </div>
+                <div class="text-xs text-red-500 font-bold tracking-widest">OPPONENT</div>
                 <div class="flex gap-1 mt-2" id="p2-hand-view">
-                    <!-- 裏面カード -->
+                    <!-- 相手の手札(裏面) -->
                 </div>
             </div>
             <div class="text-right">
@@ -256,567 +163,272 @@
             </div>
         </div>
 
-        <!-- 中央：メイン盤面 -->
+        <!-- 中央：盤面 -->
         <div class="flex-1 grid grid-cols-5 gap-0 relative" id="board-area" 
              style="background-image: radial-gradient(#1e293b 1px, transparent 1px); background-size: 20px 20px;">
-            <!-- JSでレーン生成 -->
+            <!-- レーン生成 -->
         </div>
 
         <!-- 下部：自分エリア -->
-        <div class="h-44 bg-gradient-to-t from-slate-900 to-slate-800 border-t border-slate-700 flex flex-col justify-end pb-2 relative">
+        <div class="h-44 bg-slate-900 border-t border-slate-700 flex flex-col justify-end pb-2 relative">
             <div class="flex justify-between px-4 mb-2">
-                <div class="text-xs text-blue-400 font-bold tracking-widest" id="turn-indicator">YOUR TURN</div>
-                <div class="text-xs text-yellow-500" id="game-status">CHOOSE A CARD</div>
+                <div class="text-xs text-blue-400 font-bold tracking-widest" id="turn-indicator">--</div>
+                <div class="text-xs text-yellow-500" id="game-status">--</div>
             </div>
-            
             <div class="flex justify-center items-end gap-2 px-2 h-28" id="p1-hand-view">
-                <!-- 手札カード -->
+                <!-- 自分の手札 -->
             </div>
         </div>
     </div>
 
 <script>
 /**
- * 定数・設定
+ * ------------------------------------------------------------
+ * FIREBASE CONFIGURATION (設定済み)
+ * ------------------------------------------------------------
  */
-// 4色 (0:赤/剣, 1:緑/弓, 2:青/杖, 3:黄/盾)
+const firebaseConfig = {
+  apiKey: "AIzaSyDAff48sH10URJZiv2IHJvw0qWS3GTOymQ",
+  authDomain: "game-3b358.firebaseapp.com",
+  projectId: "game-3b358",
+  storageBucket: "game-3b358.firebasestorage.app",
+  messagingSenderId: "601253776534",
+  appId: "1:601253776534:web:bfe53692c87a5fe8bc06b7",
+  measurementId: "G-T7T38LQLKD"
+};
+
+// --- グローバル変数 ---
+let db;
+let myPlayerId = null; // 1 (Host/P1) or -1 (Guest/P2)
+let currentRoomId = null;
+let unsubscribe = null; // Firestore listener
+
+// ゲーム定数
 const COLORS = [
     { id: 0, color: '#f87171', icon: '⚔️' },
     { id: 1, color: '#4ade80', icon: '🏹' },
     { id: 2, color: '#60a5fa', icon: '🪄' },
     { id: 3, color: '#fbbf24', icon: '🛡️' }
 ];
-const MAX_VAL = 12; // 1-12
+const MAX_VAL = 12;
 const HAND_SIZE = 6;
 const LANE_COUNT = 5;
-const BAN_COUNT = 3;
 
-// 役ランク
-const RANK = {
-    COLOR_RUN: 5, // 同色連番
-    THREE_KIND: 4, // 同数値
-    COLOR: 3,      // 同色
-    RUN: 2,        // 連番
-    SUM: 1         // 合計
-};
-const RANK_NAME = {
-    5: "COLOR RUN",
-    4: "TRIPLE",
-    3: "FLUSH",
-    2: "STRAIGHT",
-    1: "SUM"
-};
-
-/**
- * ゲーム状態
- */
-let state = {
-    fullDeck: [], 
-    deck: [],     
-    playerBans: [],
-    cpuBans: [], // CPUがBanしたカード
-    p1Hand: [],
-    p2Hand: [],
+// ゲーム状態 (DB同期対象)
+let gameState = {
+    status: 'waiting', // waiting, playing, finished
+    deck: [],
+    p1Hand: [], // 自分の手札 (自分がP1の場合)
+    p2Hand: [], // 相手の手札
     lanes: [], 
-    turn: 1, // 1(Player) or -1(CPU)
-    selectedCardIdx: -1,
-    phase: 'title', 
-    winner: null
+    turn: 1, // 1 or -1
+    winner: null,
+    lastUpdate: 0 // 強制再描画用トリガー
 };
 
-// UI Elements
-const els = {
-    overlay: document.getElementById('overlay'),
-    screens: {
-        title: document.getElementById('screen-title'),
-        ban: document.getElementById('screen-ban'),
-        msg: document.getElementById('screen-msg')
-    },
-    banGrid: document.getElementById('ban-grid'),
-    banCount: document.getElementById('ban-count'),
-    btnConfirmBan: document.getElementById('btn-confirm-ban'),
-    
-    container: document.getElementById('game-container'),
-    board: document.getElementById('board-area'),
-    p1Hand: document.getElementById('p1-hand-view'),
-    p2Hand: document.getElementById('p2-hand-view'),
-    deckCount: document.getElementById('deck-count'),
-    status: document.getElementById('game-status'),
-    turnInd: document.getElementById('turn-indicator'),
-    cpuStatus: document.getElementById('cpu-status'),
-    
-    msgTitle: document.getElementById('msg-title'),
-    msgSub: document.getElementById('msg-sub'),
-    msgBtn: document.getElementById('msg-btn')
-};
+let selectedHandIdx = -1;
 
 /**
- * 初期化フロー
+ * 初期化とFirebase接続チェック
  */
-function initFullDeck() {
-    state.fullDeck = [];
-    // 4色 x 12枚 = 48枚
-    for(let c=0; c<COLORS.length; c++) {
-        for(let v=1; v<=MAX_VAL; v++) {
-            state.fullDeck.push({ color: c, value: v, id: `${c}-${v}` });
-        }
+function initApp() {
+    try {
+        firebase.initializeApp(firebaseConfig);
+        db = firebase.firestore();
+        console.log("Firebase Initialized");
+    } catch (e) {
+        console.warn("Firebase Config Error:", e);
+        showError("Firebaseの設定エラーです。");
     }
 }
 
-function startBanPhase() {
-    initFullDeck();
-    state.playerBans = [];
-    state.cpuBans = [];
-    state.phase = 'ban';
-    
-    showScreen('ban');
-    renderBanGrid();
-}
-
-function renderBanGrid() {
-    els.banGrid.innerHTML = '';
-    state.fullDeck.forEach(card => {
-        const el = createCardEl(card, true); // small size
-        // バンフェーズ用スタイル調整
-        el.style.transform = "scale(0.8)";
-        el.style.width = "40px";
-        el.style.height = "60px";
-        
-        el.onclick = () => toggleBan(card.id, el);
-        els.banGrid.appendChild(el);
-    });
-    updateBanUI();
-}
-
-function toggleBan(id, el) {
-    const idx = state.playerBans.indexOf(id);
-    if (idx >= 0) {
-        state.playerBans.splice(idx, 1);
-        el.classList.remove('banned');
-    } else {
-        if (state.playerBans.length < BAN_COUNT) {
-            state.playerBans.push(id);
-            el.classList.add('banned');
-        }
-    }
-    updateBanUI();
-}
-
-function updateBanUI() {
-    const count = state.playerBans.length;
-    els.banCount.innerText = `${count} / ${BAN_COUNT}`;
-    
-    if (count === BAN_COUNT) {
-        els.btnConfirmBan.disabled = false;
-        els.btnConfirmBan.classList.remove('bg-gray-700', 'text-gray-400');
-        els.btnConfirmBan.classList.add('bg-red-600', 'text-white', 'hover:bg-red-500', 'shadow-lg');
-    } else {
-        els.btnConfirmBan.disabled = true;
-        els.btnConfirmBan.classList.add('bg-gray-700', 'text-gray-400');
-        els.btnConfirmBan.classList.remove('bg-red-600', 'text-white', 'hover:bg-red-500', 'shadow-lg');
-    }
-}
-
-function finishBanPhase() {
-    // CPUのBan選定 (プレイヤーが選んでいないものからランダムに3枚)
-    const availableForCpu = state.fullDeck.filter(c => !state.playerBans.includes(c.id));
-    shuffle(availableForCpu);
-    state.cpuBans = availableForCpu.slice(0, BAN_COUNT).map(c => c.id);
-
-    // デッキ構築（プレイヤーBan + CPU Banを除外）
-    const allBans = [...state.playerBans, ...state.cpuBans];
-    state.deck = state.fullDeck.filter(c => !allBans.includes(c.id));
-    shuffle(state.deck);
-    
-    startGame();
-}
-
-function startGame() {
-    state.turn = 1;
-    state.winner = null;
-    state.phase = 'play';
-    state.selectedCardIdx = -1;
-    
-    // 手札配布
-    state.p1Hand = [];
-    state.p2Hand = [];
-    for(let i=0; i<HAND_SIZE; i++) {
-        state.p1Hand.push(drawCard());
-        state.p2Hand.push(drawCard());
-    }
-
-    // レーン初期化
-    state.lanes = [];
-    for(let i=0; i<LANE_COUNT; i++) {
-        state.lanes.push({ p1Cards: [], p2Cards: [], winner: 0 });
-    }
-
-    renderBoard();
-    updateUI();
-    
-    els.overlay.style.display = 'none';
-}
-
-function shuffle(array) {
-    for (let i = array.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [array[i], array[j]] = [array[j], array[i]];
-    }
-}
-
-function drawCard() {
-    if (state.deck.length === 0) return null;
-    return state.deck.pop();
+function showError(msg) {
+    const el = document.getElementById('firebase-warning');
+    el.innerHTML = "⚠️ " + msg;
+    el.classList.remove('hidden');
 }
 
 /**
- * 画面遷移ヘルパー
+ * マッチングロジック
  */
-function showScreen(name) {
-    Object.values(els.screens).forEach(el => el.classList.add('hidden'));
-    els.screens[name].classList.remove('hidden');
-    els.overlay.style.display = 'flex';
-}
-
-function showMsg(title, sub, btnText, callback) {
-    els.msgTitle.innerText = title;
-    els.msgTitle.className = "text-5xl font-bold mb-4 " + (title.includes("WIN") && title.includes("YOU") ? "text-blue-500" : (title.includes("LOSE") || title.includes("CPU") ? "text-red-500" : "text-white"));
-    els.msgSub.innerHTML = sub;
-    els.msgBtn.innerText = btnText;
-    els.msgBtn.onclick = callback;
-    showScreen('msg');
-}
-
-/**
- * メイン描画
- */
-function updateUI() {
-    renderHand();
-    renderBoardCards();
-    els.deckCount.innerText = state.deck.length;
-
-    const isPlayerTurn = state.turn === 1;
-    
-    // CPU状態表示
-    if (!isPlayerTurn) {
-        els.container.classList.add('cpu-thinking');
-        els.cpuStatus.classList.remove('hidden');
-        els.turnInd.innerText = "CPU TURN";
-        els.turnInd.className = "text-xs text-red-400 font-bold tracking-widest";
-        els.status.innerText = "WAITING...";
-        els.status.classList.remove('text-yellow-500', 'animate-pulse');
-        els.status.classList.add('text-gray-500');
-    } else {
-        els.container.classList.remove('cpu-thinking');
-        els.cpuStatus.classList.add('hidden');
-        els.turnInd.innerText = "YOUR TURN";
-        els.turnInd.className = "text-xs text-blue-400 font-bold tracking-widest";
-        
-        if (state.selectedCardIdx === -1) {
-            els.status.innerText = "CHOOSE A CARD";
-            els.status.classList.add('text-yellow-500', 'animate-pulse');
-        } else {
-            els.status.innerText = "SELECT LANE";
-            els.status.classList.remove('text-yellow-500', 'animate-pulse');
-            els.status.classList.add('text-white');
-        }
-    }
-}
-
-function renderBoard() {
-    els.board.innerHTML = '';
-    for (let i = 0; i < LANE_COUNT; i++) {
-        const laneDiv = document.createElement('div');
-        laneDiv.className = 'lane-container group';
-        laneDiv.onclick = () => onLaneClick(i);
-        laneDiv.dataset.idx = i;
-
-        // CPU Area (P2)
-        const p2Div = document.createElement('div');
-        p2Div.className = 'flex-1 flex flex-col justify-start items-center pt-2 gap-1 w-full';
-        p2Div.id = `lane-${i}-p2`;
-        
-        // Center Area
-        const centerDiv = document.createElement('div');
-        centerDiv.className = 'h-10 flex items-center justify-center w-full z-10';
-        const flag = document.createElement('div');
-        flag.className = 'flag-marker';
-        flag.id = `lane-${i}-flag`;
-        flag.innerHTML = `<span class="opacity-50 text-xs">${i+1}</span>`;
-        centerDiv.appendChild(flag);
-
-        // Player Area (P1)
-        const p1Div = document.createElement('div');
-        p1Div.className = 'flex-1 flex flex-col justify-end items-center pb-2 gap-1 w-full';
-        p1Div.id = `lane-${i}-p1`;
-
-        laneDiv.appendChild(p2Div);
-        laneDiv.appendChild(centerDiv);
-        laneDiv.appendChild(p1Div);
-        els.board.appendChild(laneDiv);
-    }
-}
-
-function renderBoardCards() {
-    for (let i = 0; i < LANE_COUNT; i++) {
-        const lane = state.lanes[i];
-        
-        // P2 (CPU)
-        const p2Div = document.getElementById(`lane-${i}-p2`);
-        p2Div.innerHTML = '';
-        if (lane.p2Cards.length > 0) {
-             const rankDiv = document.createElement('div');
-             rankDiv.className = 'hand-rank text-red-300';
-             rankDiv.innerText = lane.p2Cards.length === 3 ? getHandRank(lane.p2Cards).name : '';
-             p2Div.appendChild(rankDiv);
-        }
-        lane.p2Cards.forEach(c => p2Div.appendChild(createCardEl(c, true)));
-
-        // P1 (Player)
-        const p1Div = document.getElementById(`lane-${i}-p1`);
-        p1Div.innerHTML = '';
-        lane.p1Cards.forEach(c => p1Div.appendChild(createCardEl(c, true)));
-        if (lane.p1Cards.length > 0) {
-             const rankDiv = document.createElement('div');
-             rankDiv.className = 'hand-rank text-blue-300';
-             rankDiv.innerText = lane.p1Cards.length === 3 ? getHandRank(lane.p1Cards).name : '';
-             p1Div.appendChild(rankDiv);
-        }
-
-        // Flag
-        const flag = document.getElementById(`lane-${i}-flag`);
-        flag.className = 'flag-marker';
-        if (lane.winner === 1) {
-            flag.classList.add('p1-win');
-            flag.innerText = 'YOU';
-        } else if (lane.winner === -1) {
-            flag.classList.add('p2-win');
-            flag.innerText = 'CPU';
-        } else {
-            flag.innerHTML = `<span class="opacity-30 text-xs">#${i+1}</span>`;
-            flag.classList.remove('p1-win', 'p2-win');
-        }
-
-        // Highlight
-        const laneContainer = document.querySelector(`.lane-container[data-idx="${i}"]`);
-        
-        // プレイヤーのターンかつ、選択中で、まだ置ける場所ならハイライト
-        if (state.turn === 1 && state.selectedCardIdx !== -1 && lane.winner === 0 && lane.p1Cards.length < 3) {
-            laneContainer.classList.add('highlight');
-        } else {
-            laneContainer.classList.remove('highlight');
-        }
-    }
-}
-
-function renderHand() {
-    // Player Hand
-    els.p1Hand.innerHTML = '';
-    state.p1Hand.forEach((c, idx) => {
-        if (!c) return;
-        const el = createCardEl(c, false);
-        if (state.selectedCardIdx === idx) el.classList.add('selected');
-        // CPUターン中はクリック不可
-        if (state.turn === 1) {
-            el.onclick = () => onHandClick(idx);
-        } else {
-            el.style.opacity = "0.7";
-            el.style.cursor = "default";
-        }
-        els.p1Hand.appendChild(el);
-    });
-
-    // CPU Hand (Backs)
-    els.p2Hand.innerHTML = '';
-    for(let i=0; i<state.p2Hand.length; i++) {
-        const back = document.createElement('div');
-        back.className = 'w-6 h-9 bg-slate-700 border border-slate-600 rounded m-0.5 shadow-sm';
-        els.p2Hand.appendChild(back);
-    }
-}
-
-function createCardEl(card, isSmall) {
-    const el = document.createElement('div');
-    el.className = `card color-${card.color} ${isSmall ? 'card-sm' : ''}`;
-    
-    const icon = COLORS[card.color].icon;
-    
-    el.innerHTML = `
-        <div class="card-corner-icon flex justify-between w-full px-1">
-            <span>${card.value}</span>
-        </div>
-        <div class="card-icon">${icon}</div>
-        <div class="card-num">${card.value}</div>
-        <div class="card-corner-icon flex justify-between w-full px-1 rotate-180">
-            <span>${card.value}</span>
-        </div>
-    `;
-    return el;
-}
-
-/**
- * ユーザー操作
- */
-function onHandClick(idx) {
-    if (state.phase !== 'play' || state.turn !== 1) return;
-    state.selectedCardIdx = (state.selectedCardIdx === idx) ? -1 : idx;
-    updateUI();
-}
-
-function onLaneClick(idx) {
-    if (state.phase !== 'play' || state.turn !== 1 || state.selectedCardIdx === -1) return;
-    
-    const lane = state.lanes[idx];
-    if (lane.winner !== 0) return;
-    if (lane.p1Cards.length >= 3) return;
-
-    // プレイヤーのアクション実行
-    playCard(1, state.selectedCardIdx, idx);
-}
-
-// カードをプレイする共通関数
-function playCard(playerTurn, cardIdx, laneIdx) {
-    const isPlayer = playerTurn === 1;
-    const currentHand = isPlayer ? state.p1Hand : state.p2Hand;
-    const lane = state.lanes[laneIdx];
-    const targetArr = isPlayer ? lane.p1Cards : lane.p2Cards;
-
-    // Move Card
-    const card = currentHand.splice(cardIdx, 1)[0];
-    targetArr.push(card);
-
-    // Draw
-    const newCard = drawCard();
-    if (newCard) currentHand.push(newCard);
-
-    state.selectedCardIdx = -1;
-    
-    // 判定
-    checkLaneOutcome(lane);
-
-    if (checkGameEnd()) {
-        updateUI();
-        finishGame();
+async function tryJoinRoom() {
+    const roomInput = document.getElementById('room-id-input').value.toUpperCase();
+    if (!roomInput) return;
+    if (!db) {
+        showError("データベースに接続されていません。Firestoreを作成しましたか？");
         return;
     }
+    
+    currentRoomId = roomInput;
+    document.getElementById('display-room-id').innerText = currentRoomId;
 
-    // ターン交代
-    state.turn *= -1;
-    updateUI();
+    const docRef = db.collection('rooms').doc(currentRoomId);
+    document.getElementById('btn-join').innerText = "CONNECTING...";
+    document.getElementById('btn-join').disabled = true;
 
-    // CPUのターンなら思考開始
-    if (state.turn === -1) {
-        processCpuTurn();
-    }
-}
+    try {
+        await db.runTransaction(async (transaction) => {
+            const doc = await transaction.get(docRef);
 
-/**
- * CPU ロジック (簡易AI)
- */
-function processCpuTurn() {
-    // 少し待ってから行動（思考演出）
-    setTimeout(() => {
-        if (state.phase !== 'play') return;
-
-        // 1. 最善手を探す
-        // 全手札 x 全レーン を評価する
-        let bestMove = { cardIdx: -1, laneIdx: -1, score: -9999 };
-        
-        state.p2Hand.forEach((card, cIdx) => {
-            state.lanes.forEach((lane, lIdx) => {
-                // 置けない場所はスキップ
-                if (lane.winner !== 0 || lane.p2Cards.length >= 3) return;
-
-                // スコア計算
-                let score = evaluateMove(card, lane);
-                
-                // ランダム性を少し加えて予測不能にする
-                score += Math.random() * 5; 
-
-                if (score > bestMove.score) {
-                    bestMove = { cardIdx: cIdx, laneIdx: lIdx, score: score };
+            if (!doc.exists) {
+                // 部屋がない -> ホスト(P1)として作成
+                myPlayerId = 1;
+                const initialState = createInitialState();
+                transaction.set(docRef, initialState);
+            } else {
+                const data = doc.data();
+                if (data.status === 'waiting') {
+                    // 待機中 -> ゲスト(P2)として参加
+                    myPlayerId = -1;
+                    transaction.update(docRef, { 
+                        status: 'playing',
+                        lastUpdate: Date.now() 
+                    });
+                } else {
+                    // 自分が既にいる部屋に再接続する場合の考慮などは省略
+                    // 満員として扱う
+                    throw "Room is full";
                 }
-            });
+            }
         });
 
-        // 2. 行動実行
-        if (bestMove.cardIdx !== -1) {
-            playCard(-1, bestMove.cardIdx, bestMove.laneIdx);
-        } else {
-            // 置く場所がない（通常ありえないが）場合はパス扱い、またはゲーム終了判定
-            // ここでは簡易的に何もしない（詰み）
-        }
+        // 成功したら画面切り替え & 監視開始
+        showScreen('wait');
+        startListening();
 
-    }, 1000 + Math.random() * 500); // 1.0~1.5秒待つ
+    } catch (error) {
+        if(error === "Room is full") {
+            alert("その部屋は既に満員か、対戦中です。");
+        } else {
+            console.error(error);
+            showError("接続失敗: Firestoreが無効か、ルール設定(テストモード)が必要です。");
+        }
+        document.getElementById('btn-join').innerText = "ENTER ROOM";
+        document.getElementById('btn-join').disabled = false;
+    }
 }
 
-// CPUの評価関数
-function evaluateMove(card, lane) {
-    // 仮想的に置いてみる
-    const testCards = [...lane.p2Cards, card];
-    const rankInfo = getHandRank(testCards);
-    
-    let score = 0;
-
-    // 役ができる、または強くなる手を優先
-    score += rankInfo.rank * 10;
-    
-    // 3枚目で役完成なら高評価
-    if (testCards.length === 3) {
-        score += 50;
-        // ストレートフラッシュやスリーカードは特に狙う
-        if (rankInfo.rank >= RANK.THREE_KIND) score += 50;
-    } else if (testCards.length === 2) {
-        // 2枚目なら、将来性（リーチ）を見る
-        // 同じ色ならフラッシュ狙い
-        if (testCards[0].color === testCards[1].color) score += 5;
-        // 数字が近いならストレート狙い
-        if (Math.abs(testCards[0].value - testCards[1].value) <= 2) score += 5;
-    }
-
-    // 相手が勝ちそうなレーンを阻止する（後出しジャンケン）
-    if (lane.p1Cards.length === 3) {
-        // 相手の強さを計算
-        const p1Rank = getHandRank(lane.p1Cards);
-        // 勝てるなら超優先
-        if (rankInfo.rank > p1Rank.rank || (rankInfo.rank === p1Rank.rank && rankInfo.score > p1Rank.score)) {
-            score += 100;
-        } else {
-            // 勝てないなら捨てて他に行く
-            score -= 50; 
-        }
-    }
-
-    return score;
+function startListening() {
+    unsubscribe = db.collection('rooms').doc(currentRoomId)
+        .onSnapshot((doc) => {
+            if (doc.exists) {
+                const data = doc.data();
+                gameState = data;
+                onGameStateChanged();
+            }
+        });
 }
 
+function onGameStateChanged() {
+    // 状態に応じた画面遷移
+    if (gameState.status === 'waiting') {
+        showScreen('wait');
+    } else if (gameState.status === 'playing') {
+        document.getElementById('overlay').style.display = 'none';
+        updateGameUI();
+    } else if (gameState.status === 'finished') {
+        document.getElementById('overlay').style.display = 'flex';
+        showResult();
+    }
+}
 
 /**
- * ロジック: 役判定
+ * ゲームロジック (同期周り)
  */
-function getHandRank(cards) {
-    if (cards.length === 0) return { rank: 0, score: 0, name: "" };
+function createInitialState() {
+    // デッキ生成
+    let deck = [];
+    for(let c=0; c<COLORS.length; c++) {
+        for(let v=1; v<=MAX_VAL; v++) {
+            deck.push({ color: c, value: v });
+        }
+    }
+    // シャッフル
+    for (let i = deck.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+
+    // 手札配布
+    const p1Hand = [];
+    const p2Hand = [];
+    for(let i=0; i<HAND_SIZE; i++) {
+        if(deck.length) p1Hand.push(deck.pop());
+        if(deck.length) p2Hand.push(deck.pop());
+    }
+
+    // レーン
+    const lanes = [];
+    for(let i=0; i<LANE_COUNT; i++) {
+        lanes.push({ p1Cards: [], p2Cards: [], winner: 0 });
+    }
+
+    return {
+        status: 'waiting',
+        deck: deck,
+        p1Hand, p2Hand,
+        lanes,
+        turn: 1, // P1 starts
+        winner: null,
+        lastUpdate: Date.now()
+    };
+}
+
+// カードをプレイする処理
+function playCard(cardIdx, laneIdx) {
+    if (gameState.turn !== myPlayerId) return; // 自分の番じゃない
     
+    // データ操作 (ローカルのgameStateを更新してからDBに送る)
+    const myHand = myPlayerId === 1 ? gameState.p1Hand : gameState.p2Hand;
+    const lane = gameState.lanes[laneIdx];
+    const targetArr = myPlayerId === 1 ? lane.p1Cards : lane.p2Cards;
+
+    if (targetArr.length >= 3 || lane.winner !== 0) return;
+
+    // カード移動
+    const card = myHand.splice(cardIdx, 1)[0];
+    targetArr.push(card);
+
+    // ドロー
+    if (gameState.deck.length > 0) {
+        myHand.push(gameState.deck.pop());
+    }
+
+    // レーン判定
+    checkLaneOutcome(lane);
+
+    // 勝利判定
+    if (checkGameEnd()) {
+        gameState.status = 'finished';
+    } else {
+        // ターン交代
+        gameState.turn *= -1;
+    }
+
+    gameState.lastUpdate = Date.now();
+    
+    // DB更新
+    selectedHandIdx = -1;
+    db.collection('rooms').doc(currentRoomId).set(gameState);
+}
+
+// 役判定ロジック
+function getHandRank(cards) {
+    if (cards.length < 3) return { rank: 0, score: 0 };
     const sorted = [...cards].sort((a, b) => a.value - b.value);
     const v = sorted.map(c => c.value);
     const c = sorted.map(c => c.color);
     
-    // カードが足りない場合の仮ランク（合計値のみ）
-    if (cards.length < 3) {
-        const sum = v.reduce((a, b) => a + b, 0);
-        return { rank: 0, score: sum, name: "" };
-    }
-
     const isFlush = c[0] === c[1] && c[1] === c[2];
     const isStraight = (v[0] + 1 === v[1] && v[1] + 1 === v[2]);
     const isTriple = (v[0] === v[1] && v[1] === v[2]);
     const sum = v.reduce((a, b) => a + b, 0);
 
-    if (isFlush && isStraight) return { rank: RANK.COLOR_RUN, score: sum, name: RANK_NAME[5] };
-    if (isTriple) return { rank: RANK.THREE_KIND, score: sum, name: RANK_NAME[4] };
-    if (isFlush) return { rank: RANK.COLOR, score: sum, name: RANK_NAME[3] };
-    if (isStraight) return { rank: RANK.RUN, score: sum, name: RANK_NAME[2] };
-    return { rank: RANK.SUM, score: sum, name: RANK_NAME[1] };
+    if (isFlush && isStraight) return { rank: 5, score: sum };
+    if (isTriple) return { rank: 4, score: sum };
+    if (isFlush) return { rank: 3, score: sum };
+    if (isStraight) return { rank: 2, score: sum };
+    return { rank: 1, score: sum };
 }
 
 function checkLaneOutcome(lane) {
@@ -829,36 +441,139 @@ function checkLaneOutcome(lane) {
         else {
             if (r1.score > r2.score) lane.winner = 1;
             else if (r2.score > r1.score) lane.winner = -1;
-            else lane.winner = 1; // ドローは先手(Player)有利
+            else lane.winner = 1; // 先手(P1)有利
         }
     }
 }
 
 function checkGameEnd() {
     let p1 = 0, p2 = 0;
-    state.lanes.forEach(l => {
+    gameState.lanes.forEach(l => {
         if (l.winner === 1) p1++;
         if (l.winner === -1) p2++;
     });
-    
-    // 過半数(3)を取れば勝ち
-    if (p1 >= 3) { state.winner = 1; return true; }
-    if (p2 >= 3) { state.winner = -1; return true; }
-    
-    // 全レーン埋まった
-    if (state.lanes.every(l => l.winner !== 0)) {
-        state.winner = (p1 > p2) ? 1 : -1;
+    if (p1 >= 3) { gameState.winner = 1; return true; }
+    if (p2 >= 3) { gameState.winner = -1; return true; }
+    if (gameState.lanes.every(l => l.winner !== 0)) {
+        gameState.winner = (p1 > p2) ? 1 : -1;
         return true;
     }
     return false;
 }
 
-function finishGame() {
-    state.phase = 'gameover';
-    const msg = state.winner === 1 ? "YOU WIN!" : "CPU WINS!";
-    showMsg(msg, "NICE FIGHT!", "REPLAY", () => location.reload());
+/**
+ * 画面描画
+ */
+function updateGameUI() {
+    const boardEl = document.getElementById('board-area');
+    const p1HandEl = document.getElementById('p1-hand-view');
+    const p2HandEl = document.getElementById('p2-hand-view');
+    const turnEl = document.getElementById('turn-indicator');
+    const statusEl = document.getElementById('game-status');
+
+    // 自分の手番かどうか
+    const isMyTurn = gameState.turn === myPlayerId;
+    turnEl.innerText = isMyTurn ? "YOUR TURN" : "OPPONENT'S TURN";
+    turnEl.className = isMyTurn ? "text-xs text-blue-400 font-bold" : "text-xs text-red-400 font-bold";
+    statusEl.innerText = isMyTurn ? (selectedHandIdx === -1 ? "CHOOSE CARD" : "SELECT LANE") : "WAITING...";
+    statusEl.className = isMyTurn ? "text-xs text-yellow-500 animate-pulse" : "text-xs text-gray-500";
+
+    document.getElementById('deck-count').innerText = gameState.deck.length;
+
+    // レーン描画
+    boardEl.innerHTML = '';
+    gameState.lanes.forEach((lane, i) => {
+        const container = document.createElement('div');
+        container.className = 'lane-container group';
+        if (isMyTurn && selectedHandIdx !== -1 && lane.winner === 0) {
+            const myLaneCnt = myPlayerId === 1 ? lane.p1Cards.length : lane.p2Cards.length;
+            if (myLaneCnt < 3) {
+                container.classList.add('highlight');
+                container.onclick = () => playCard(selectedHandIdx, i);
+            }
+        }
+
+        // 描画用に 自分(下) / 相手(上) にマッピング
+        const myCards = myPlayerId === 1 ? lane.p1Cards : lane.p2Cards;
+        const opCards = myPlayerId === 1 ? lane.p2Cards : lane.p1Cards;
+        
+        // 相手エリア (上)
+        const topDiv = document.createElement('div');
+        topDiv.className = 'flex-1 flex flex-col justify-start items-center pt-2 gap-1 w-full';
+        opCards.forEach(c => topDiv.appendChild(createCardEl(c, true)));
+
+        // フラッグ
+        const centerDiv = document.createElement('div');
+        centerDiv.className = 'h-10 flex items-center justify-center w-full';
+        const flag = document.createElement('div');
+        flag.className = 'flag-marker';
+        flag.innerHTML = `<span class="opacity-30 text-xs">${i+1}</span>`;
+        if (lane.winner !== 0) {
+            const isWin = lane.winner === myPlayerId;
+            flag.classList.add(isWin ? 'p1-win' : 'p2-win');
+            flag.innerText = isWin ? 'YOU' : 'OPP';
+        }
+        centerDiv.appendChild(flag);
+
+        // 自分エリア (下)
+        const bottomDiv = document.createElement('div');
+        bottomDiv.className = 'flex-1 flex flex-col justify-end items-center pb-2 gap-1 w-full';
+        myCards.forEach(c => bottomDiv.appendChild(createCardEl(c, true)));
+
+        container.appendChild(topDiv);
+        container.appendChild(centerDiv);
+        container.appendChild(bottomDiv);
+        boardEl.appendChild(container);
+    });
+
+    // 手札描画
+    p1HandEl.innerHTML = '';
+    const myHand = myPlayerId === 1 ? gameState.p1Hand : gameState.p2Hand;
+    myHand.forEach((c, idx) => {
+        const el = createCardEl(c, false);
+        if (idx === selectedHandIdx) el.classList.add('selected');
+        if (isMyTurn) {
+            el.onclick = () => {
+                selectedHandIdx = (selectedHandIdx === idx) ? -1 : idx;
+                updateGameUI(); // 再描画
+            };
+        }
+        p1HandEl.appendChild(el);
+    });
+
+    // 相手手札 (裏面)
+    p2HandEl.innerHTML = '';
+    const opHandSize = (myPlayerId === 1 ? gameState.p2Hand : gameState.p1Hand).length;
+    for(let i=0; i<opHandSize; i++) {
+        const back = document.createElement('div');
+        back.className = 'w-6 h-9 bg-slate-700 border border-slate-600 rounded m-0.5 shadow-sm';
+        p2HandEl.appendChild(back);
+    }
 }
 
+function createCardEl(card, isSmall) {
+    const el = document.createElement('div');
+    el.className = `card color-${card.color} ${isSmall ? 'card-sm' : ''}`;
+    el.innerHTML = `<div class="card-num">${card.value}</div><div class="card-icon">${COLORS[card.color].icon}</div>`;
+    return el;
+}
+
+function showResult() {
+    showScreen('msg');
+    const isWin = gameState.winner === myPlayerId;
+    const titleEl = document.getElementById('msg-title');
+    titleEl.innerText = isWin ? "VICTORY!" : "DEFEAT...";
+    titleEl.className = isWin ? "text-5xl font-bold mb-4 text-blue-500" : "text-5xl font-bold mb-4 text-red-500";
+    document.getElementById('msg-sub').innerText = "ゲームが終了しました";
+}
+
+function showScreen(id) {
+    ['screen-lobby', 'screen-wait', 'screen-msg'].forEach(s => document.getElementById(s).classList.add('hidden'));
+    document.getElementById('screen-' + id).classList.remove('hidden');
+}
+
+// 開始
+initApp();
 </script>
 </body>
 </html>
