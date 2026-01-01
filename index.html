@@ -75,6 +75,11 @@
         .card-sm { width: 40px; height: 58px; border-width: 1px; margin: -6px 0; }
         .card-sm .card-num { font-size: 1.0rem; }
 
+        /* 極小カード (Ban表示用) */
+        .card-xs { width: 28px; height: 42px; border-width: 1px; margin: 0; }
+        .card-xs .card-num { font-size: 0.7rem; }
+        .card-xs .card-icon { font-size: 0.8rem; opacity: 0.5; }
+
         /* レーン */
         .lane-container {
             position: relative;
@@ -204,6 +209,13 @@
 
         <!-- 下部：自分エリア -->
         <div class="h-44 bg-slate-900 border-t border-slate-700 flex flex-col justify-end pb-2 relative">
+            
+            <!-- 追加: 自分のBanカード表示 -->
+            <div class="absolute top-2 right-4 flex flex-col items-end">
+                <div class="text-[10px] text-gray-500 font-bold mb-1">BANNED</div>
+                <div class="flex gap-1" id="my-bans-view"></div>
+            </div>
+
             <div class="flex justify-between px-4 mb-2">
                 <div class="text-xs text-blue-400 font-bold tracking-widest" id="turn-indicator">--</div>
                 <div class="text-xs text-yellow-500" id="game-status">--</div>
@@ -601,6 +613,7 @@ function updateGameUI() {
     const p2HandEl = document.getElementById('p2-hand-view');
     const turnEl = document.getElementById('turn-indicator');
     const statusEl = document.getElementById('game-status');
+    const myBansEl = document.getElementById('my-bans-view');
 
     const isMyTurn = gameState.turn === myPlayerId;
     turnEl.innerText = isMyTurn ? "YOUR TURN" : "OPPONENT'S TURN";
@@ -609,6 +622,21 @@ function updateGameUI() {
     statusEl.className = isMyTurn ? "text-xs text-yellow-500 animate-pulse" : "text-xs text-gray-500";
 
     document.getElementById('deck-count').innerText = gameState.deck.length;
+
+    // Banカード描画
+    myBansEl.innerHTML = '';
+    const myBans = myPlayerId === 1 ? gameState.p1Bans : gameState.p2Bans;
+    if (myBans) {
+        myBans.forEach(id => {
+            const [c, v] = id.split('-').map(Number);
+            const card = { color: c, value: v };
+            const el = createCardEl(card, true);
+            el.classList.remove('card-sm');
+            el.classList.add('card-xs');
+            el.style.opacity = "0.7";
+            myBansEl.appendChild(el);
+        });
+    }
 
     boardEl.innerHTML = '';
     gameState.lanes.forEach((lane, i) => {
