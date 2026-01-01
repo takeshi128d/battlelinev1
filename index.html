@@ -35,7 +35,7 @@
             font-weight: bold;
             box-shadow: 2px 3px 6px rgba(0,0,0,0.4);
             cursor: pointer;
-            transition: transform 0.15s, box-shadow 0.15s;
+            transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
             position: relative;
             border-width: 2px;
             border-style: solid;
@@ -49,6 +49,11 @@
             box-shadow: 0 0 15px rgba(250, 204, 21, 0.9);
             border-color: #facc15;
             z-index: 20;
+        }
+        .card.banned {
+            filter: grayscale(100%) opacity(0.3);
+            transform: scale(0.9);
+            border-color: #333;
         }
         /* 裏面 */
         .card.back {
@@ -103,11 +108,22 @@
         }
         input { background: #1e293b; border: 1px solid #475569; color: white; padding: 10px; border-radius: 4px; text-align: center; font-size: 1.2rem; outline: none; }
         input:focus { border-color: #facc15; }
+
+        /* Ban画面グリッド */
+        #ban-grid {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 4px;
+            max-width: 95vw;
+            margin: 10px;
+            overflow-y: auto;
+            max-height: 50vh;
+        }
     </style>
 </head>
 <body class="h-screen w-full flex flex-col">
 
-    <!-- オーバーレイ (ロビー/メッセージ) -->
+    <!-- オーバーレイ (ロビー/Ban/メッセージ) -->
     <div id="overlay">
         <h1 class="text-4xl font-bold mb-2 text-yellow-500" style="font-family: 'Cinzel'">FRONTIER LINE</h1>
         <p class="text-gray-400 mb-8 text-xs tracking-widest">ONLINE MULTIPLAYER</p>
@@ -132,8 +148,25 @@
         <!-- 待機画面 -->
         <div id="screen-wait" class="text-center hidden">
             <div class="animate-spin text-4xl mb-4">⚔️</div>
-            <h2 class="text-2xl font-bold mb-2 text-white">WAITING FOR OPPONENT...</h2>
-            <p class="text-gray-400 text-sm">相手の入室を待っています<br>Room ID: <span id="display-room-id" class="text-yellow-400 font-mono"></span></p>
+            <h2 class="text-2xl font-bold mb-2 text-white">WAITING...</h2>
+            <p class="text-gray-400 text-sm">通信待機中<br>Room ID: <span id="display-room-id" class="text-yellow-400 font-mono"></span></p>
+        </div>
+
+        <!-- Ban画面 (除外カード選択) -->
+        <div id="screen-ban" class="text-center hidden w-full flex flex-col items-center">
+            <h2 class="text-2xl text-red-400 font-bold mb-2" style="font-family: 'Cinzel'">TACTICAL BAN</h2>
+            <p class="text-gray-300 text-sm mb-2">この対戦から除外するカードを<span class="text-red-400 font-bold">2枚</span>選択してください。<br>(相手には通知されません)</p>
+            
+            <div id="ban-grid" class="p-2 border border-slate-700 bg-slate-800 rounded">
+                <!-- 全カード一覧 -->
+            </div>
+            
+            <div class="mt-4 flex gap-4 items-center mb-4">
+                <div class="text-xl font-bold" id="ban-count">0 / 2</div>
+                <button id="btn-confirm-ban" onclick="submitBan()" disabled class="px-8 py-2 bg-gray-700 text-gray-400 font-bold rounded border border-gray-600 transition">
+                    CONFIRM
+                </button>
+            </div>
         </div>
 
         <!-- メッセージ画面 (勝敗など) -->
@@ -213,20 +246,26 @@ const COLORS = [
 const MAX_VAL = 12;
 const HAND_SIZE = 6;
 const LANE_COUNT = 5;
+const BAN_COUNT = 2; // 各自2枚除外
 
 // ゲーム状態 (DB同期対象)
 let gameState = {
-    status: 'waiting', // waiting, playing, finished
+    status: 'waiting', // waiting, banning, playing, finished
+    p1Bans: null,      // P1が除外したカードIDリスト
+    p2Bans: null,      // P2が除外したカードIDリスト
     deck: [],
-    p1Hand: [], // 自分の手札 (自分がP1の場合)
-    p2Hand: [], // 相手の手札
+    p1Hand: [], 
+    p2Hand: [], 
     lanes: [], 
-    turn: 1, // 1 or -1
+    turn: 1, 
     winner: null,
-    lastUpdate: 0 // 強制再描画用トリガー
+    lastUpdate: 0
 };
 
+// ローカル状態
 let selectedHandIdx = -1;
+let mySelectedBans = [];
+let fullDeckForBan = [];
 
 /**
  * 初期化とFirebase接続チェック
@@ -236,6 +275,14 @@ function initApp() {
         firebase.initializeApp(firebaseConfig);
         db = firebase.firestore();
         console.log("Firebase Initialized");
+        
+        // Ban画面用にフルデッキ情報を生成
+        fullDeckForBan = [];
+        for(let c=0; c<COLORS.length; c++) {
+            for(let v=1; v<=MAX_VAL; v++) {
+                fullDeckForBan.push({ color: c, value: v, id: `${c}-${v}` });
+            }
+        }
     } catch (e) {
         console.warn("Firebase Config Error:", e);
         showError("Firebaseの設定エラーです。");
@@ -255,7 +302,7 @@ async function tryJoinRoom() {
     const roomInput = document.getElementById('room-id-input').value.toUpperCase();
     if (!roomInput) return;
     if (!db) {
-        showError("データベースに接続されていません。Firestoreを作成しましたか？");
+        showError("データベースに接続されていません。");
         return;
     }
     
@@ -271,29 +318,25 @@ async function tryJoinRoom() {
             const doc = await transaction.get(docRef);
 
             if (!doc.exists) {
-                // 部屋がない -> ホスト(P1)として作成
+                // ホスト(P1)として作成
                 myPlayerId = 1;
                 const initialState = createInitialState();
                 transaction.set(docRef, initialState);
             } else {
                 const data = doc.data();
                 if (data.status === 'waiting') {
-                    // 待機中 -> ゲスト(P2)として参加
+                    // ゲスト(P2)として参加 -> 即座にBanフェーズへ移行
                     myPlayerId = -1;
                     transaction.update(docRef, { 
-                        status: 'playing',
+                        status: 'banning',
                         lastUpdate: Date.now() 
                     });
                 } else {
-                    // 自分が既にいる部屋に再接続する場合の考慮などは省略
-                    // 満員として扱う
                     throw "Room is full";
                 }
             }
         });
 
-        // 成功したら画面切り替え & 監視開始
-        showScreen('wait');
         startListening();
 
     } catch (error) {
@@ -301,7 +344,7 @@ async function tryJoinRoom() {
             alert("その部屋は既に満員か、対戦中です。");
         } else {
             console.error(error);
-            showError("接続失敗: Firestoreが無効か、ルール設定(テストモード)が必要です。");
+            showError("接続失敗: Firestoreが無効か、設定が必要です。");
         }
         document.getElementById('btn-join').innerText = "ENTER ROOM";
         document.getElementById('btn-join').disabled = false;
@@ -323,26 +366,127 @@ function onGameStateChanged() {
     // 状態に応じた画面遷移
     if (gameState.status === 'waiting') {
         showScreen('wait');
-    } else if (gameState.status === 'playing') {
+        document.querySelector('#screen-wait h2').innerText = "WAITING FOR P2...";
+    } 
+    else if (gameState.status === 'banning') {
+        // Banフェーズ: まだBanを送信していないならBan画面、送信済みなら待機画面
+        if (myPlayerId === 1 && !gameState.p1Bans) {
+            setupBanScreen();
+        } else if (myPlayerId === -1 && !gameState.p2Bans) {
+            setupBanScreen();
+        } else {
+            showScreen('wait');
+            document.querySelector('#screen-wait h2').innerText = "OPPONENT CHOOSING...";
+        }
+
+        // 両者のBanが揃っている場合、ホスト(P1)がゲームを開始する処理を走らせる
+        if (myPlayerId === 1 && gameState.p1Bans && gameState.p2Bans) {
+            startGameWithBans();
+        }
+    }
+    else if (gameState.status === 'playing') {
         document.getElementById('overlay').style.display = 'none';
         updateGameUI();
-    } else if (gameState.status === 'finished') {
+    } 
+    else if (gameState.status === 'finished') {
         document.getElementById('overlay').style.display = 'flex';
         showResult();
     }
 }
 
 /**
- * ゲームロジック (同期周り)
+ * 初期データ構造
  */
 function createInitialState() {
-    // デッキ生成
-    let deck = [];
-    for(let c=0; c<COLORS.length; c++) {
-        for(let v=1; v<=MAX_VAL; v++) {
-            deck.push({ color: c, value: v });
+    // レーンのみ初期化（デッキはBan後に生成）
+    const lanes = [];
+    for(let i=0; i<LANE_COUNT; i++) {
+        lanes.push({ p1Cards: [], p2Cards: [], winner: 0 });
+    }
+
+    return {
+        status: 'waiting',
+        p1Bans: null,
+        p2Bans: null,
+        deck: [],
+        p1Hand: [], p2Hand: [],
+        lanes,
+        turn: 1, 
+        winner: null,
+        lastUpdate: Date.now()
+    };
+}
+
+/**
+ * Ban画面ロジック
+ */
+function setupBanScreen() {
+    showScreen('ban');
+    const grid = document.getElementById('ban-grid');
+    grid.innerHTML = '';
+    mySelectedBans = [];
+    updateBanBtn();
+
+    fullDeckForBan.forEach(card => {
+        const el = createCardEl(card, true);
+        el.style.transform = "scale(0.8)";
+        el.style.width = "40px";
+        el.style.height = "60px";
+        el.onclick = () => toggleBanSelection(card.id, el);
+        grid.appendChild(el);
+    });
+}
+
+function toggleBanSelection(id, el) {
+    const idx = mySelectedBans.indexOf(id);
+    if (idx >= 0) {
+        mySelectedBans.splice(idx, 1);
+        el.classList.remove('banned');
+    } else {
+        if (mySelectedBans.length < BAN_COUNT) {
+            mySelectedBans.push(id);
+            el.classList.add('banned');
         }
     }
+    updateBanBtn();
+}
+
+function updateBanBtn() {
+    const count = mySelectedBans.length;
+    document.getElementById('ban-count').innerText = `${count} / ${BAN_COUNT}`;
+    const btn = document.getElementById('btn-confirm-ban');
+    if (count === BAN_COUNT) {
+        btn.disabled = false;
+        btn.classList.remove('bg-gray-700', 'text-gray-400');
+        btn.classList.add('bg-red-600', 'text-white');
+    } else {
+        btn.disabled = true;
+        btn.classList.add('bg-gray-700', 'text-gray-400');
+        btn.classList.remove('bg-red-600', 'text-white');
+    }
+}
+
+async function submitBan() {
+    // DBに自分のBanリストを送信
+    const updateData = {};
+    if (myPlayerId === 1) updateData.p1Bans = mySelectedBans;
+    else updateData.p2Bans = mySelectedBans;
+    updateData.lastUpdate = Date.now();
+
+    await db.collection('rooms').doc(currentRoomId).update(updateData);
+    // 画面は onGameStateChanged で待機画面に切り替わる
+}
+
+/**
+ * ゲーム開始処理 (Ban情報をもとにデッキ構築)
+ */
+async function startGameWithBans() {
+    // ホスト(P1)のみが実行
+    const allBans = [...gameState.p1Bans, ...gameState.p2Bans];
+    
+    // デッキ生成
+    let deck = fullDeckForBan.filter(c => !allBans.includes(c.id));
+    
     // シャッフル
     for (let i = deck.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -357,62 +501,49 @@ function createInitialState() {
         if(deck.length) p2Hand.push(deck.pop());
     }
 
-    // レーン
-    const lanes = [];
-    for(let i=0; i<LANE_COUNT; i++) {
-        lanes.push({ p1Cards: [], p2Cards: [], winner: 0 });
-    }
-
-    return {
-        status: 'waiting',
-        deck: deck,
-        p1Hand, p2Hand,
-        lanes,
-        turn: 1, // P1 starts
-        winner: null,
+    await db.collection('rooms').doc(currentRoomId).update({
+        status: 'playing',
+        deck,
+        p1Hand,
+        p2Hand,
         lastUpdate: Date.now()
-    };
+    });
 }
 
-// カードをプレイする処理
+/**
+ * ゲームプレイロジック
+ */
 function playCard(cardIdx, laneIdx) {
-    if (gameState.turn !== myPlayerId) return; // 自分の番じゃない
+    if (gameState.turn !== myPlayerId) return; 
     
-    // データ操作 (ローカルのgameStateを更新してからDBに送る)
     const myHand = myPlayerId === 1 ? gameState.p1Hand : gameState.p2Hand;
     const lane = gameState.lanes[laneIdx];
     const targetArr = myPlayerId === 1 ? lane.p1Cards : lane.p2Cards;
 
     if (targetArr.length >= 3 || lane.winner !== 0) return;
 
-    // カード移動
     const card = myHand.splice(cardIdx, 1)[0];
     targetArr.push(card);
 
-    // ドロー
     if (gameState.deck.length > 0) {
         myHand.push(gameState.deck.pop());
     }
 
-    // レーン判定
     checkLaneOutcome(lane);
 
-    // 勝利判定
     if (checkGameEnd()) {
         gameState.status = 'finished';
     } else {
-        // ターン交代
         gameState.turn *= -1;
     }
 
     gameState.lastUpdate = Date.now();
     
-    // DB更新
     selectedHandIdx = -1;
     db.collection('rooms').doc(currentRoomId).set(gameState);
 }
 
-// 役判定ロジック
+// 役判定
 function getHandRank(cards) {
     if (cards.length < 3) return { rank: 0, score: 0 };
     const sorted = [...cards].sort((a, b) => a.value - b.value);
@@ -441,7 +572,7 @@ function checkLaneOutcome(lane) {
         else {
             if (r1.score > r2.score) lane.winner = 1;
             else if (r2.score > r1.score) lane.winner = -1;
-            else lane.winner = 1; // 先手(P1)有利
+            else lane.winner = 1; 
         }
     }
 }
@@ -471,7 +602,6 @@ function updateGameUI() {
     const turnEl = document.getElementById('turn-indicator');
     const statusEl = document.getElementById('game-status');
 
-    // 自分の手番かどうか
     const isMyTurn = gameState.turn === myPlayerId;
     turnEl.innerText = isMyTurn ? "YOUR TURN" : "OPPONENT'S TURN";
     turnEl.className = isMyTurn ? "text-xs text-blue-400 font-bold" : "text-xs text-red-400 font-bold";
@@ -480,7 +610,6 @@ function updateGameUI() {
 
     document.getElementById('deck-count').innerText = gameState.deck.length;
 
-    // レーン描画
     boardEl.innerHTML = '';
     gameState.lanes.forEach((lane, i) => {
         const container = document.createElement('div');
@@ -493,16 +622,13 @@ function updateGameUI() {
             }
         }
 
-        // 描画用に 自分(下) / 相手(上) にマッピング
         const myCards = myPlayerId === 1 ? lane.p1Cards : lane.p2Cards;
         const opCards = myPlayerId === 1 ? lane.p2Cards : lane.p1Cards;
         
-        // 相手エリア (上)
         const topDiv = document.createElement('div');
         topDiv.className = 'flex-1 flex flex-col justify-start items-center pt-2 gap-1 w-full';
         opCards.forEach(c => topDiv.appendChild(createCardEl(c, true)));
 
-        // フラッグ
         const centerDiv = document.createElement('div');
         centerDiv.className = 'h-10 flex items-center justify-center w-full';
         const flag = document.createElement('div');
@@ -515,7 +641,6 @@ function updateGameUI() {
         }
         centerDiv.appendChild(flag);
 
-        // 自分エリア (下)
         const bottomDiv = document.createElement('div');
         bottomDiv.className = 'flex-1 flex flex-col justify-end items-center pb-2 gap-1 w-full';
         myCards.forEach(c => bottomDiv.appendChild(createCardEl(c, true)));
@@ -526,7 +651,6 @@ function updateGameUI() {
         boardEl.appendChild(container);
     });
 
-    // 手札描画
     p1HandEl.innerHTML = '';
     const myHand = myPlayerId === 1 ? gameState.p1Hand : gameState.p2Hand;
     myHand.forEach((c, idx) => {
@@ -535,13 +659,12 @@ function updateGameUI() {
         if (isMyTurn) {
             el.onclick = () => {
                 selectedHandIdx = (selectedHandIdx === idx) ? -1 : idx;
-                updateGameUI(); // 再描画
+                updateGameUI(); 
             };
         }
         p1HandEl.appendChild(el);
     });
 
-    // 相手手札 (裏面)
     p2HandEl.innerHTML = '';
     const opHandSize = (myPlayerId === 1 ? gameState.p2Hand : gameState.p1Hand).length;
     for(let i=0; i<opHandSize; i++) {
@@ -568,7 +691,7 @@ function showResult() {
 }
 
 function showScreen(id) {
-    ['screen-lobby', 'screen-wait', 'screen-msg'].forEach(s => document.getElementById(s).classList.add('hidden'));
+    ['screen-lobby', 'screen-wait', 'screen-ban', 'screen-msg'].forEach(s => document.getElementById(s).classList.add('hidden'));
     document.getElementById('screen-' + id).classList.remove('hidden');
 }
 
